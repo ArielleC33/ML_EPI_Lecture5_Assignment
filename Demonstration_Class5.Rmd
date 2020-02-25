@@ -1,0 +1,260 @@
+---
+title: "Demonstration of Regularization"
+author: "Arielle Coq"
+date: ''
+output:
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Demonstration of Regularization Methods
+
+This will be a demonstration of the three regularization methods discussed: ridge regression, Lasso (least absolute shrinkage and selection operator) and Elastic Net.
+
+## Description of Data
+
+The data we will be using are from the 2019 County Health Rankings. They provide data on a number of demographic, social, environmental and health characteristics on counties within the United States. We will be using this dataset to try to identify the most important predictors of life expectancy on a county-level. We have restricted the dataset to 67 features and an outcome of life expectancy in years. 
+
+Original data upon which this exercise has been based can be found here: http://www.countyhealthrankings.org/explore-health-rankings/rankings-data-documentation
+
+Variable names are not originally informative. You can look up all full variable name meanings here: http://www.countyhealthrankings.org/sites/default/files/2019%20Analytic%20Documentation_1.pdf
+
+
+### Load needed libraries
+```{r}
+library(tidyverse)
+library(caret)
+library(glmnet)
+library (viridis)
+library(Amelia)
+library(caret)
+library(devtools)
+library(stats)
+library(factoextra)
+library(cluster)
+library(modelr)
+library(mgcv)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+### Step 1: Read in data, partition, remove outcome variable and standardize 
+```{r data_prep}
+set.seed(100)
+
+chr<-read.csv("chr.csv")
+
+chr<-chr[,2:68]
+
+var.names<-c("pre_death", "poorhealth", "poorphyshealth_days", "poormenthealth_days", "low_bwt", "ad_smoking", "ad_obesity", "foodenv_index", "phys_inactivity", "exer_access", "excess_drink", "alc_drivdeaths", "sti", "teen_birth", "uninsured", "primcareproviders", "dentists", "menthealthproviders", "prevhosp", "mammo_screen", "flu_vacc", "hsgrad", "somecollege", "unemployed", "child_poverty", "income_ineq", "sing_parent", "social_assoc", "violent_crime", "injury_deaths", "pm_air", "water_viol", "housing_prob", "driving_alone", "long_commute", "life_exp", "age_adj_premortality", "freq_physdistress", "freq_mentdistress", "diabetes", "hiv", "food_insecure", "ltd_access_healthyfood", "mvcrash_deaths", "insuff_sleep", "uninsured_adults", "uninsured_child", "other_pcp", "medhhinc", "freelunch_child", "res_seg_bw", "res_seg_nw", "firearm_fatalities", "homeownership", "hous_cost_burden", "population", "bw18", "gte65", "nonhisp_afam", "AmerInd_AlasNative", "Asian", "OPacIslander", "Hisp", "nonhisp_white", "nonprof_english", "female", "rural")
+
+colnames(chr)<-var.names
+
+
+
+#Reminder of non-tidyverse way to create data partition
+#train.indices<-createDataPartition(y=bc.data$outcome,p=0.7,list=FALSE)
+
+training.data<-chr$life_exp %>% createDataPartition(p=0.7, list=F)
+train.data<-chr[training.data, ]
+test.data<-chr[-training.data, ]
+
+#Store outcome 
+life.exp.train<-train.data$life_exp
+life.exp.test<-test.data$life_exp
+
+# Store the outcome in one train and test and the predictors in another 
+#model matrix- will create indicator variables for categorical varaibles, it does not do anything to the continuous variables
+x.train<-model.matrix(life_exp~., train.data)[,-1]
+x.test<-model.matrix(life_exp~., test.data)[,-1]
+```
+
+### Step 2: Running the algorithms on the training data
+
+The glmnet package allows us to run all three of the penalized models using the same format. The value of the alpha parameter dictates whether it is a ride regression, lasso or elastic net. A value of 0 is the ridge regression, the 1 is a lasso and any value in between 0 and 1 will provide an elastic net. The package also takes an input for lambda, but by default it will vary lambda and provide you output for 100 options. There is also an option to use cross-validation to choose the optimal labmda. That requires use of cv.glmnet().
+
+
+```{r reg_algorithms}
+set.seed(100)
+
+#Ridge Regression
+
+model.1<-glmnet(x.train, life.exp.train, alpha=0, standardize = TRUE)
+
+## predictor, aouctome, set the alpha and standardize in the equivalent to scaling, scaling improves the data that you have. Want to scale for prediction - so that the shrickage is based on the information in the data and not the number of values in the data 
+
+##Did not set Lambda- Glmnet - randomlly choose 100 values 
+## The 66 at the top of the plot tells you how many predictors are still in the model- all of them are still in the Ridge 
+
+## Trying to maximize accurancy 
+
+plot(model.1, xvar="lambda", label=TRUE)
+plot(model.1, xvar="dev", label=TRUE)
+
+model.1$beta[,1]
+
+#LASSO
+
+model.2<-glmnet(x.train, life.exp.train, alpha=1, standardize = TRUE)
+
+plot(model.2, xvar="lambda", label=TRUE)
+plot(model.2, xvar="dev", label=TRUE)
+
+model.2$beta[,1]
+
+###Coeffcients are going down as you increase lamnda
+
+#Elastic Net
+
+model.3<-glmnet(x.train, life.exp.train, alpha=0.5, standardize = TRUE)
+
+plot(model.3, xvar="lambda", label=TRUE)
+```
+
+### Step 3: Using cross-validation to select the optimal value for lambda (tuning parameter)
+
+Reminder when lambda is 0, you will obtain OLS regressio coefficients (i.e. no regularization)
+When lambda approaches large numbers, the regression coefficents will shrink toward 0
+
+RIDGE= alpha = 0 (CORRECT)
+
+```{r}
+model.1.cv<-cv.glmnet(x.train, life.exp.train, alpha=0)
+plot(model.1.cv)
+
+### WIll give the lambda that give you the smallest error and the 1 sd over - assuming the first one is overfitting 
+
+model.1.cv$lambda.min
+model.1.cv$lambda.1se
+
+model.1.train.final<-glmnet(x.train, life.exp.train, alpha=0, lambda=model.1.cv$lambda.min)
+coef(model.1.train.final)
+
+```
+
+### Step 4: Apply model to test set and evaluate model
+```{r}
+
+##Predicting and using the model in the test set and get the predicted and get RMSE and R-squred
+model.1.test.pred<-model.1.train.final %>% predict(x.test) %>% as.vector()
+data.frame(RMSE=RMSE(model.1.test.pred, life.exp.test), RSQ=R2(model.1.test.pred, life.exp.test))
+
+```
+
+### Exercise
+
+Using cross-validation, find the optimal values for lambda when using lasso and elastic net, setting the alpha of the elastic net to 0.5. Then apply the final models to the test set. Which model would you choose if this were your study? Why? (Note, again normally we wouldn't compare models within the test set. We would either have a validation set, or would assess error in the training set.)
+
+LASSO = alpha = 1 (CORRCT)
+
+```{r}
+model.2.cv<-cv.glmnet(x.train, life.exp.train, alpha=1)
+plot(model.2.cv)
+
+### WIll give the lambda that give you the smallest error and the 1 sd over - assuming the first one is overfitting 
+
+model.2.cv$lambda.min
+model.2.cv$lambda.1se
+
+model.2.train.final<-glmnet(x.train, life.exp.train, alpha=1, lambda=model.2.cv$lambda.min)
+coef(model.2.train.final)
+
+model.2.test.pred<-model.2.train.final %>% predict(x.test) %>% as.vector()
+data.frame(RMSE=RMSE(model.2.test.pred, life.exp.test), RSQ=R2(model.2.test.pred, life.exp.test))
+```
+
+Elastic Net
+
+```{r}
+model.3.cv<-cv.glmnet(x.train, life.exp.train, alpha=0.5)
+plot(model.3.cv)
+
+### WIll give the lambda that give you the smallest error and the 1 sd over - assuming the first one is overfitting 
+
+model.3.cv$lambda.min
+model.3.cv$lambda.1se
+
+model.3.train.final<-glmnet(x.train, life.exp.train, alpha=0.5, lambda=model.3.cv$lambda.min)
+coef(model.3.train.final)
+
+model.3.test.pred<-model.3.train.final %>% predict(x.test) %>% as.vector()
+data.frame(RMSE=RMSE(model.3.test.pred, life.exp.test), RSQ=R2(model.3.test.pred, life.exp.test))
+```
+
+### Step 5:  Using caret to select best tuning parameters
+I will demonstrate how you can use the caret package to construct penalized regressions.By default, caret will vary both alpha and lambda to select the best values via cross-validation. Because the alpha is not set at 0 or 1, this is typically results in an elastic net. But, you can set the alpha level at a fixed value in order to obtain ridge or lasso results.
+
+tuneLength sets the number of combinations of different values of alpha and lambda to compare.
+
+```{r}
+##3 USing caret package not glmnet 
+
+set.seed(123)
+en.model<- train(
+  life_exp ~., data = train.data, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneLength=10)
+## Tune lenghth = try 10 different parameters -just 10 total 
+en.model$bestTune
+
+# Model coefficients
+coef(en.model$finalModel, en.model$bestTune$lambda)
+
+# Make predictions
+
+en.pred <- en.model %>% predict(x.test)
+
+# Model prediction performance
+data.frame(
+  RMSE = RMSE(en.pred, test.data$life_exp),
+  Rsquare = R2(en.pred, test.data$life_exp)
+)
+```
+### Exercise: 
+The following code will allow you to fix the alpha (I have it set to 0 for a ridge) and run either a ridge or lasso analysis. Use that code to run both ridge and Lasso using the caret package and obtain coefficients and evaluation metrics. 
+
+If the caret package will select the optimal alpha and lambda value, why might you still choose lasso or ridge over elastic net (or an automated process of choosing alpha as in caret)? 
+
+```{r}
+#Create grid to search lambda
+lambda<-10^seq(-3,3, length=100)
+
+set.seed(100)
+
+model.4<-train(
+  life_exp ~., data=train.data, method="glmnet", trControl=trainControl("cv", number=10), tuneGrid=expand.grid(alpha=0, lambda=lambda)
+)
+
+plot(model.4)
+
+lambda<-10^seq(-3,3, length=100)
+
+model.5<-train(
+  life_exp ~., data=train.data, method="glmnet", trControl=trainControl("cv", number=10), tuneGrid=expand.grid(alpha=1, lambda=lambda)
+)
+
+plot(model.5)
+
+```
+
+
+HAve to specify a link function or glm 
+If it is a factor variable - have to use logictic

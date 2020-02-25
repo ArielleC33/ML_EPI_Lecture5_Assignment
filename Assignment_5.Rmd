@@ -1,0 +1,165 @@
+---
+title: "Epi_ML_Assignment5"
+author: "Arielle Coq AC4140"
+date: "2/24/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(caret)
+library(glmnet)
+library (viridis)
+library(Amelia)
+library(caret)
+library(devtools)
+library(stats)
+library(factoextra)
+library(cluster)
+library(modelr)
+library(mgcv)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+The first thing that I will do is load the data into the R and set the seed to 100. I will create a training and testing data sets that will be used for this analysis. I will also store teh outcome in a separate dataset apart from the other variables. 
+
+```{r}
+set.seed(100)
+Alcohol<-read.csv("alcohol_use.csv")
+
+Alcohol2 = Alcohol %>% 
+mutate(alc_consumption = recode(alc_consumption, "CurrentUse"= 1, "NotCurrentUse" = 0)) %>% 
+  select(-X)
+
+training.data<-Alcohol2$alc_consumption %>% createDataPartition(p=0.7, list=F)
+train.data1<-Alcohol2[training.data, ]
+test.data1<-Alcohol2[-training.data, ]
+
+#Store outcome 
+alc.consumption.train<-train.data1$alc_consumption
+alc.consumption.test<-test.data1$alc_consumption
+
+# Store the outcome in one train and test and the predictors in another 
+#model matrix- will create indicator variables for categorical varaibles, it does not do anything to the continuous variables
+x.train1<-model.matrix(alc_consumption~., train.data1)[,-1]
+x.test1<-model.matrix(alc_consumption~., test.data1)[,-1]
+```
+
+####Question 1
+
+I will create three different models to determine which model I will use. The three models that I will perform are: a model that chooses alpha and lambda via cross-validation using all of the features, a model that uses all the features and traditional logistic regression, and a lasso model using all of the features
+
+The first model I will do is a model that chooses alpha and lambda via cross-validation using all of the features.
+
+
+```{r}
+set.seed(100)
+model.1<- train(
+  alc_consumption ~., data = train.data1, method = "glmnet",
+  trControl = trainControl("cv", number = 10), tuneLength=10, family = "binomial")
+## Tune lenghth = try 10 different parameters -just 10 total 
+model.1$bestTune
+
+model.1a <-glmnet(x.train1, alc.consumption.train, alpha = model.1$bestTune$alpha, lambda = model.1$bestTune$lambda, standardize = TRUE, family = "binomial")
+```
+
+Prediction for the first model 
+
+```{r}
+model.1_fitted<-predict(model.1a,x.test1, type= "response")
+
+fitted.results.p <- ifelse(model.1_fitted > 0.5,1,0)
+
+testing.model<-(as.numeric(test.data1$alc_consumption))
+
+model.1_Error <- mean(fitted.results.p != testing.model, na.rm=T)
+
+
+print(paste('Accuracy Model 1',1-model.1_Error))
+```
+
+The second model I will do is a model that uses all the features and traditional logistic regression
+
+```{r}
+model.6<-glm(alc_consumption~., family = binomial(link = "logit"), data = train.data1)
+summary (model.6)
+
+model.6a <-glmnet(x.train1, alc.consumption.train, method = "glm", standardize = TRUE, family = "binomial")
+```
+
+Prediction for model 2 
+
+```{r}
+model.6_fitted<-predict(model.6a, x.test1, type= "response")
+
+fitted.results.p2 <- ifelse(model.6_fitted > 0.5,1,0)
+
+testing.model.1<-(as.numeric(test.data1$alc_consumption))
+
+model.6_Error <- mean(fitted.results.p2 != testing.model.1, na.rm=T)
+
+
+print(paste('Accuracy Model 2',1-model.1_Error))
+```
+
+The third and final model that I will do is a lasso model using all of the features 
+
+```{r}
+model.7.cv<-cv.glmnet(x.train1, alc.consumption.train, alpha = 1, lambda = exp(seq(-10, 0, length = 100)), family = "binomial")
+
+plot(model.7.cv)
+
+plot(model.7.cv, xvar="lambda", label=TRUE)
+plot(model.7.cv, xvar="dev", label=TRUE)
+
+model.7.cv$lambda.min
+model.7.cv$lambda.1se
+
+model.7a<-glmnet(x.train1, alc.consumption.train, alpha=1, family = "binomial", lambda=model.7.cv$lambda.min)
+coef(model.7a)
+```
+
+Predicion for model 3 
+
+```{r}
+model.7_fitted<-predict(model.7a, x.test1, type= "response")
+
+fitted.results.p2 <- ifelse(model.7_fitted > 0.5,1,0)
+
+testing.model.2<-(as.numeric(test.data1$alc_consumption))
+
+model.7_Error <- mean(fitted.results.p2 != testing.model.2, na.rm=T)
+
+
+print(paste('Accuracy Model 3',1-model.7_Error))
+```
+
+####Question 2.
+
+You should compare the performance of all three models within the test set and then decide which model you would choose as your final model. Provide justification for your choice
+
+I would choose the elastice net or the logistic or traditional model becauese they had the same amount of accurancies when looking at the accurancy. The lasso has a lower accuracy and therefore should not be considered as a model to use. 
+
+####Question 4.
+
+What research questions could this analysis either a) directly address or b) indirectly help to address by providing information that could be used in subsequent analyses?
+
+A research question that could be asked directly or indirectly to address by providing information that could be used in subsequent analyses would be doing a logistic regression to see if some of the features are associated with the alcohol consumptions . 
